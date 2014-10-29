@@ -24,3 +24,11 @@ add_executable(future_echo_client
 )
 add_dependencies(future_echo_client plex)
 target_link_libraries(future_echo_client plex ${EXTRA_LIBS})
+
+# Coroutine examples
+
+add_executable(spawn_echo_client
+  spawn_echo_client.cpp
+)
+add_dependencies(spawn_echo_client plex)
+target_link_libraries(spawn_echo_client plex ${EXTRA_LIBS})

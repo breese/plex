@@ -34,7 +34,7 @@ add_definitions(-std=c++11)
 ###############################################################################
 
 # FIXME: Probably ok to use older version
-find_package(Boost 1.54.0 COMPONENTS system thread)
+find_package(Boost 1.54.0 COMPONENTS coroutine context system thread)
 if (NOT ${Boost_FOUND})
   message(FATAL_ERROR "Boost not found (or too old)")
 endif()

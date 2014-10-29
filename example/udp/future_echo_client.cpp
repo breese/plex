@@ -1,5 +1,4 @@
 #include <string>
-#include <vector>
 #include <functional>
 #include <thread>
 #include <boost/asio/buffer.hpp>
