@@ -6,6 +6,7 @@
 #include <tuple>
 
 #include <boost/asio/basic_io_object.hpp>
+#include <boost/asio/async_result.hpp>
 #include <boost/asio/ip/udp.hpp> // resolver
 
 #include <plex/udp/detail/socket_base.hpp>
@@ -24,9 +25,12 @@ class socket
     : public detail::socket_base,
       public boost::asio::basic_io_object<detail::service>
 {
+    using service_type = detail::service;
     using resolver_type = boost::asio::ip::udp::resolver;
 
 public:
+    socket(socket&&);
+
     socket(boost::asio::io_service& io);
 
     socket(boost::asio::io_service& io,
@@ -34,25 +38,40 @@ public:
 
     virtual ~socket();
 
-    // FIXME: Use asio::async_result
-    template <typename ConnectHandler>
-    void async_connect(const endpoint_type& remote_endpoint,
-                       ConnectHandler&& handler);
+    template <typename CompletionToken>
+    typename boost::asio::async_result<
+        typename boost::asio::handler_type<CompletionToken,
+                                           void(boost::system::error_code)>::type
+        >::type
+    async_connect(const endpoint_type& remote_endpoint,
+                  CompletionToken&& token);
 
-    template <typename ConnectHandler>
-    void async_connect(const std::string& remote_host,
-                       const std::string& remote_service,
-                       ConnectHandler&& handler);
+    template <typename CompletionToken>
+    typename boost::asio::async_result<
+        typename boost::asio::handler_type<CompletionToken,
+                                           void(boost::system::error_code)>::type
+        >::type
+    async_connect(const std::string& remote_host,
+                  const std::string& remote_service,
+                  CompletionToken&& token);
 
     template <typename MutableBufferSequence,
-              typename ReadHandler>
-    void async_receive(const MutableBufferSequence& buffers,
-                       ReadHandler&& handler);
+              typename CompletionToken>
+    typename boost::asio::async_result<
+        typename boost::asio::handler_type<CompletionToken,
+                                           void(boost::system::error_code, std::size_t)>::type
+        >::type
+    async_receive(const MutableBufferSequence& buffers,
+                  CompletionToken&& token);
 
     template <typename ConstBufferSequence,
-              typename WriteHandler>
-    void async_send(const ConstBufferSequence& buffers,
-                    WriteHandler&& handler);
+              typename CompletionToken>
+    typename boost::asio::async_result<
+        typename boost::asio::handler_type<CompletionToken,
+                                           void(boost::system::error_code, std::size_t)>::type
+        >::type
+    async_send(const ConstBufferSequence& buffers,
+               CompletionToken&& token);
 
 private:
     friend class detail::multiplexer;
@@ -87,15 +106,21 @@ private:
     }
 
 private:
-    template <typename ErrorCode,
-              typename Handler>
-    void report_error(ErrorCode error,
-                      Handler&& handler);
+    template <typename Handler,
+              typename ErrorCode>
+    void invoke_handler(Handler&& handler,
+                        ErrorCode error);
+
+    template <typename Handler,
+              typename ErrorCode>
+    void invoke_handler(Handler&& handler,
+                        ErrorCode error,
+                        std::size_t size);
 
     template <typename ConnectHandler>
     void process_connect(const boost::system::error_code& error,
                          const endpoint_type&,
-                         const ConnectHandler& handler);
+                         ConnectHandler&& handler);
 
     template <typename ConnectHandler>
     void async_next_connect(resolver_type::iterator where,
@@ -140,14 +165,20 @@ namespace plex
 namespace udp
 {
 
+inline socket::socket(socket&& other)
+    : basic_io_object<service_type>(std::forward<decltype(other)>(other))
+      // multiplexer(other.multiplexer)
+{
+}
+
 inline socket::socket(boost::asio::io_service& io)
-    : boost::asio::basic_io_object<detail::service>(io)
+    : boost::asio::basic_io_object<service_type>(io)
 {
 }
 
 inline socket::socket(boost::asio::io_service& io,
                       const endpoint_type& local_endpoint)
-    : boost::asio::basic_io_object<detail::service>(io),
+    : boost::asio::basic_io_object<service_type>(io),
       multiplexer(get_service().add(local))
 {
     local = local_endpoint;
@@ -162,56 +193,97 @@ inline socket::~socket()
     get_service().remove(local);
 }
 
-template <typename ConnectHandler>
-void socket::async_connect(const endpoint_type& remote_endpoint,
-                           ConnectHandler&& handler)
+template <typename CompletionToken>
+typename boost::asio::async_result<
+    typename boost::asio::handler_type<CompletionToken,
+                                       void(boost::system::error_code)>::type
+    >::type
+socket::async_connect(const endpoint_type& remote_endpoint,
+                      CompletionToken&& token)
 {
-    get_io_service().dispatch
-        ([this, remote_endpoint, handler]
-         {
-             boost::system::error_code success;
-             this->process_connect(success, remote_endpoint, handler);
-         });
+    using handler_type = typename boost::asio::handler_type<CompletionToken,
+                                                            void(boost::system::error_code)>::type;
+    handler_type handler(std::forward<decltype(token)>(token));
+    boost::asio::async_result<decltype(handler)> result(handler);
+
+    if (!multiplexer)
+    {
+        // Socket must be bound to a local endpoint
+        invoke_handler(std::forward<handler_type>(handler),
+                       boost::asio::error::invalid_argument);
+    }
+    else
+    {
+        get_io_service().post
+            ([this, remote_endpoint, handler] () mutable
+             {
+                 boost::system::error_code success;
+                 this->process_connect(success,
+                                       remote_endpoint,
+                                       std::forward<decltype(handler)>(handler));
+             });
+    }
+    return result.get();
 }
 
 template <typename ConnectHandler>
 void socket::process_connect(const boost::system::error_code& error,
                              const endpoint_type& remote_endpoint,
-                             const ConnectHandler& handler)
+                             ConnectHandler&& handler)
 {
-    // FIXME: Remove from multiplexer if already connected to different endpoint?
+    // FIXME: Remove from multiplexer if already connected to different remote endpoint?
     if (!error)
     {
+        assert(multiplexer);
         remote = remote_endpoint;
         multiplexer->add(this);
     }
     handler(error);
 }
 
-template <typename ConnectHandler>
-void socket::async_connect(const std::string& host,
-                           const std::string& service,
-                           ConnectHandler&& handler)
+template <typename CompletionToken>
+typename boost::asio::async_result<
+    typename boost::asio::handler_type<CompletionToken,
+                                       void(boost::system::error_code)>::type
+    >::type
+socket::async_connect(const std::string& host,
+                      const std::string& service,
+                      CompletionToken&& token)
 {
-    std::shared_ptr<resolver_type> resolver
-        = std::make_shared<resolver_type>(std::ref(get_io_service()));
-    resolver_type::query query(host, service);
-    resolver->async_resolve
-        (query,
-         [this, handler, resolver]
-         (const boost::system::error_code& error,
-          resolver_type::iterator where)
-         {
-             // Process resolve
-             if (error)
+    using handler_type = typename boost::asio::handler_type<CompletionToken,
+                                                            void(boost::system::error_code)>::type;
+    handler_type handler(std::forward<decltype(token)>(token));
+    boost::asio::async_result<decltype(handler)> result(handler);
+
+    if (!multiplexer)
+    {
+        // Socket must be bound to a local endpoint
+        invoke_handler(std::forward<decltype(handler)>(handler),
+                       boost::asio::error::invalid_argument);
+    }
+    else
+    {
+        std::shared_ptr<resolver_type> resolver
+            = std::make_shared<resolver_type>(std::ref(get_io_service()));
+        resolver_type::query query(host, service);
+        resolver->async_resolve
+            (query,
+             [this, handler, resolver]
+             (const boost::system::error_code& error,
+              resolver_type::iterator where) mutable
              {
-                 handler(error);
-             }
-             else
-             {
-                 this->async_next_connect(where, resolver, handler);
-             }
-         });
+                 // Process resolve
+                 if (error)
+                 {
+                     handler(error);
+                 }
+                 else
+                 {
+                     this->async_next_connect(where, resolver, handler);
+                 }
+             });
+    }
+    return result.get();
 }
 
 template <typename ConnectHandler>
@@ -222,7 +294,7 @@ void socket::async_next_connect(resolver_type::iterator where,
     async_connect
         (*where,
          [this, where, resolver, handler]
-         (const boost::system::error_code& error)
+         (const boost::system::error_code& error) mutable
          {
              this->process_next_connect(error,
                                         where,
@@ -253,45 +325,56 @@ void socket::process_next_connect(const boost::system::error_code& error,
     }
     else
     {
-        process_connect(error, *where, handler);
+        process_connect(error, *where, std::forward<decltype(handler)>(handler));
     }
 }
 
 template <typename MutableBufferSequence,
-          typename ReadHandler>
-void socket::async_receive(const MutableBufferSequence& buffers,
-                           ReadHandler&& handler)
+          typename CompletionToken>
+typename boost::asio::async_result<
+    typename boost::asio::handler_type<CompletionToken,
+                                       void(boost::system::error_code, std::size_t)>::type
+    >::type
+socket::async_receive(const MutableBufferSequence& buffers,
+                      CompletionToken&& token)
 {
+    using handler_type = typename boost::asio::handler_type<CompletionToken,
+                                                            void(boost::system::error_code, std::size_t)>::type;
+    handler_type handler(std::forward<decltype(token)>(token));
+    boost::asio::async_result<decltype(handler)> result(handler);
+
     if (!multiplexer)
     {
-        report_error(boost::asio::error::not_connected,
-                     std::forward<ReadHandler>(handler));
-        return;
-    }
-
-    if (receive_output_queue.empty())
-    {
-        std::unique_ptr<receive_input_type> operation(new receive_input_type(buffers,
-                                                                             std::move(handler)));
-        receive_input_queue.emplace(std::move(operation));
-
-        multiplexer->start_receive();
+        invoke_handler(std::forward<decltype(handler)>(handler),
+                       boost::asio::error::not_connected,
+                       0);
     }
     else
     {
-        get_io_service().dispatch
-            ([this, &buffers, handler] ()
-             {
-                 // FIXME: Thread-safe
-                 auto output = std::move(this->receive_output_queue.front());
-                 this->receive_output_queue.pop();
-                 this->process_receive(std::get<0>(*output),
-                                       std::get<1>(*output),
-                                       std::get<2>(*output),
-                                       buffers,
-                                       handler);
-             });
+        if (receive_output_queue.empty())
+        {
+            std::unique_ptr<receive_input_type> operation(new receive_input_type(buffers, std::move(handler)));
+            receive_input_queue.emplace(std::move(operation));
+
+            multiplexer->start_receive();
+        }
+        else
+        {
+            get_io_service().post
+                ([this, buffers, handler] () mutable
+                 {
+                     // FIXME: Thread-safe
+                     auto output = std::move(this->receive_output_queue.front());
+                     this->receive_output_queue.pop();
+                     this->process_receive(std::get<0>(*output),
+                                           std::get<1>(*output),
+                                           std::get<2>(*output),
+                                           buffers,
+                                           handler);
+                 });
+        }
     }
+    return result.get();
 }
 
 template <typename MutableBufferSequence,
@@ -302,55 +385,83 @@ void socket::process_receive(const boost::system::error_code& error,
                              const MutableBufferSequence& buffers,
                              ReadHandler&& handler)
 {
+    auto length = std::min(boost::asio::buffer_size(buffers), bytes_transferred);
     if (!error)
     {
         boost::asio::buffer_copy(buffers,
                                  boost::asio::buffer(*datagram),
-                                 bytes_transferred);
+                                 length);
     }
-    handler(error, bytes_transferred);
+    handler(error, length);
 }
 
 template <typename ConstBufferSequence,
-          typename WriteHandler>
-void socket::async_send(const ConstBufferSequence& buffers,
-                        WriteHandler&& handler)
+          typename CompletionToken>
+typename boost::asio::async_result<
+    typename boost::asio::handler_type<CompletionToken,
+                                       void(boost::system::error_code, std::size_t)>::type
+    >::type
+socket::async_send(const ConstBufferSequence& buffers,
+                   CompletionToken&& token)
 {
+    using handler_type = typename boost::asio::handler_type<CompletionToken,
+                                                            void(boost::system::error_code, std::size_t)>::type;
+    handler_type handler(std::forward<decltype(token)>(token));
+    boost::asio::async_result<decltype(handler)> result(handler);
+
     if (!multiplexer)
     {
-        report_error(boost::asio::error::not_connected,
-                     std::forward<WriteHandler>(handler));
-        return;
+        invoke_handler(std::forward<decltype(handler)>(handler),
+                       boost::asio::error::not_connected,
+                       0);
     }
-
-    multiplexer->async_send_to
-        (buffers,
-         remote,
-         [handler] (const boost::system::error_code& error,
-                    std::size_t bytes_transferred)
-         {
-             // Process send
-             handler(error, bytes_transferred);
-         });
+    else
+    {
+        multiplexer->async_send_to
+            (buffers,
+             remote,
+             [handler] (const boost::system::error_code& error,
+                        std::size_t bytes_transferred) mutable
+             {
+                 // Process send
+                 handler(error, bytes_transferred);
+             });
+    }
+    return result.get();
 }
 
-template <typename ErrorCode,
-          typename Handler>
-void socket::report_error(ErrorCode error,
-                          Handler&& handler)
+template <typename Handler,
+          typename ErrorCode>
+void socket::invoke_handler(Handler&& handler,
+                            ErrorCode error)
 {
     assert(error);
 
     get_io_service().post
-        ([error, handler]
+        ([handler, error]() mutable
          {
-             handler(boost::asio::error::make_error_code(error), 0);
+             handler(boost::asio::error::make_error_code(error));
          });
 }
 
-inline void socket::set_multiplexer(std::shared_ptr<detail::multiplexer> m)
+template <typename Handler,
+          typename ErrorCode>
+void socket::invoke_handler(Handler&& handler,
+                            ErrorCode error,
+                            std::size_t size)
 {
-    multiplexer = m;
+    assert(error);
+
+    get_io_service().post
+        ([handler, error, size]() mutable
+         {
+             handler(boost::asio::error::make_error_code(error), size);
+         });
+}
+
+inline void socket::set_multiplexer(std::shared_ptr<detail::multiplexer> value)
+{
+    multiplexer = value;
 }
 
 } // namespace udp

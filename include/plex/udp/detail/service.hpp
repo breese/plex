@@ -32,6 +32,9 @@ public:
     struct implementation_type {};
     void construct(implementation_type& impl) {}
     void destroy(implementation_type&) {}
+    // Required for move construction
+    void move_construct(implementation_type&, implementation_type&) {}
+    void move_assign(implementation_type&, service&, implementation_type&) {}
 
 private:
     virtual void shutdown_service() {}

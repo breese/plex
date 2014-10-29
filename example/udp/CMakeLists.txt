@@ -3,14 +3,24 @@ project(plex-example)
 
 include_directories(".")
 
-add_executable(udpserver
-  server.cpp
-)
-add_dependencies(udpserver plex)
-target_link_libraries(udpserver plex ${EXTRA_LIBS})
+# Async examples
 
-add_executable(udpclient
-  client.cpp
+add_executable(async_echo_server
+  async_echo_server.cpp
 )
-add_dependencies(udpclient plex)
-target_link_libraries(udpclient plex ${EXTRA_LIBS})
+add_dependencies(async_echo_server plex)
+target_link_libraries(async_echo_server plex ${EXTRA_LIBS})
+
+add_executable(async_echo_client
+  async_echo_client.cpp
+)
+add_dependencies(async_echo_client plex)
+target_link_libraries(async_echo_client plex ${EXTRA_LIBS})
+
+# Future examples
+
+add_executable(future_echo_client
+  future_echo_client.cpp
+)
+add_dependencies(future_echo_client plex)
+target_link_libraries(future_echo_client plex ${EXTRA_LIBS})

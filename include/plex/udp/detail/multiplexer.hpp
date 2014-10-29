@@ -49,10 +49,15 @@ public:
     void async_accept(SocketType&,
                       AcceptHandler&& handler);
 
-    template <typename ConstBufferSequence, typename WriteHandler>
-    void async_send_to(const ConstBufferSequence& buffers,
+    template <typename ConstBufferSequence,
+              typename CompletionToken>
+    typename boost::asio::async_result<
+        typename boost::asio::handler_type<CompletionToken,
+                                           void(boost::system::error_code, std::size_t)>::type
+        >::type
+    async_send_to(const ConstBufferSequence& buffers,
                        const endpoint_type& endpoint,
-                       WriteHandler&& handler);
+                       CompletionToken&& token);
 
     void start_receive();
 
@@ -174,15 +179,24 @@ void multiplexer::process_accept(const boost::system::error_code& error,
     handler(error);
 }
 
-template <typename ConstBufferSequence, typename WriteHandler>
-void multiplexer::async_send_to(const ConstBufferSequence& buffers,
-                                const endpoint_type& endpoint,
-                                WriteHandler&& handler)
+template <typename ConstBufferSequence,
+          typename CompletionToken>
+typename boost::asio::async_result<
+    typename boost::asio::handler_type<CompletionToken,
+                                       void(boost::system::error_code, std::size_t)>::type
+    >::type
+multiplexer::async_send_to(const ConstBufferSequence& buffers,
+                           const endpoint_type& endpoint,
+                           CompletionToken&& token)
 {
     // FIXME: Congestion control
+    typename boost::asio::handler_type<CompletionToken,
+                              void(boost::system::error_code, std::size_t)>::type handler(std::forward<CompletionToken>(token));
+    boost::asio::async_result<decltype(handler)> result(handler);
     next_layer.async_send_to(buffers,
                              endpoint,
-                             std::forward<WriteHandler>(handler));
+                             std::forward<decltype(handler)>(handler));
+    return result.get();
 }
 
 inline void multiplexer::start_receive()
@@ -203,7 +217,7 @@ inline void multiplexer::do_start_receive()
         (boost::asio::buffer(datagram->data(), datagram->capacity()),
          *remote_endpoint,
          [self, datagram, remote_endpoint]
-         (const boost::system::error_code& error, std::size_t size)
+         (const boost::system::error_code& error, std::size_t size) mutable
          {
              self->process_receive(error, size, datagram, *remote_endpoint);
          });

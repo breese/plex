@@ -13,7 +13,6 @@ public:
            const std::string& host,
            const std::string& service)
         : socket(io,
-                 // FIXME: Does this work as local_endpoint?
                  boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0)),
           counter(4)
     {
@@ -24,9 +23,10 @@ public:
                                        std::placeholders::_1));
     }
 
+private:
     void on_connect(const boost::system::error_code& error)
     {
-        std::cout << __FUNCTION__ << "(" << error.message() << ")" << std::endl;
+        std::cout << "Connected with " << error.message() << std::endl;
 
         if (!error)
         {
@@ -38,26 +38,33 @@ public:
     {
         std::shared_ptr<message_type> message = std::make_shared<message_type>(data.begin(), data.end());
         socket.async_send(boost::asio::buffer(*message),
-                          std::bind(&client::on_send,
-                                    this,
-                                    std::placeholders::_1,
-                                    std::placeholders::_2,
-                                    message));
+                          [this, message] (boost::system::error_code error,
+                                           std::size_t length)
+                          {
+                              if (!error)
+                              {
+                                  do_receive();
+                                  if (--counter > 0)
+                                  {
+                                      do_send("bravo");
+                                  }
+                              }
+                          });
     }
 
-    void on_send(const boost::system::error_code& error,
-                 std::size_t message_size,
-                 std::shared_ptr<message_type> message)
+    void do_receive()
     {
-        std::cout << __FUNCTION__ << "(" << error.message() << ")" << std::endl;
-
-        if (!error)
-        {
-            if (--counter > 0)
-            {
-                do_send("bravo");
-            }
-        }
+        std::shared_ptr<message_type> message = std::make_shared<message_type>(1400);
+        socket.async_receive(boost::asio::buffer(*message),
+                             [this, message] (boost::system::error_code error,
+                                              std::size_t length)
+                             {
+                                 for (auto ch : *message)
+                                 {
+                                     std::cout << ch;
+                                 }
+                                 std::cout << std::endl;
+                             });
     }
 
 private:
