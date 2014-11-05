@@ -73,6 +73,8 @@ public:
     async_send(const ConstBufferSequence& buffers,
                CompletionToken&& token);
 
+    endpoint_type local_endpoint() const;
+
 private:
     friend class detail::multiplexer;
     friend class acceptor;
@@ -179,9 +181,8 @@ inline socket::socket(boost::asio::io_service& io)
 inline socket::socket(boost::asio::io_service& io,
                       const endpoint_type& local_endpoint)
     : boost::asio::basic_io_object<service_type>(io),
-      multiplexer(get_service().add(local))
+      multiplexer(get_service().add(local_endpoint))
 {
-    local = local_endpoint;
 }
 
 inline socket::~socket()
@@ -190,7 +191,7 @@ inline socket::~socket()
     {
         multiplexer->remove(this);
     }
-    get_service().remove(local);
+    get_service().remove(local_endpoint());
 }
 
 template <typename CompletionToken>
@@ -462,6 +463,13 @@ void socket::invoke_handler(Handler&& handler,
 inline void socket::set_multiplexer(std::shared_ptr<detail::multiplexer> value)
 {
     multiplexer = value;
+}
+
+inline socket::endpoint_type socket::local_endpoint() const
+{
+    assert(multiplexer);
+
+    return multiplexer->next_layer().local_endpoint();
 }
 
 } // namespace udp

@@ -26,7 +26,7 @@ public:
     void async_accept(socket_type& socket,
                       AcceptHandler&& handler);
 
-    endpoint_type local_endpoint() const { return local; }
+    endpoint_type local_endpoint() const;
 
 private:
     template <typename AcceptHandler>
@@ -36,7 +36,6 @@ private:
 
 private:
     std::shared_ptr<detail::multiplexer> multiplexer;
-    endpoint_type local;
 };
 
 } // namespace udp
@@ -54,8 +53,7 @@ namespace udp
 inline acceptor::acceptor(boost::asio::io_service& io,
                           endpoint_type local_endpoint)
     : boost::asio::basic_io_object<detail::service>(io),
-      multiplexer(get_service().add(local_endpoint)) // FIXME: Should we deregister?
-      // FIXME: Or create per async_accept call?
+      multiplexer(get_service().add(local_endpoint))
 {
 }
 
@@ -96,6 +94,13 @@ void acceptor::process_accept(const boost::system::error_code& error,
         handler(error);
         break;
     }
+}
+
+acceptor::endpoint_type acceptor::local_endpoint() const
+{
+    assert(multiplexer);
+
+    return multiplexer->next_layer().local_endpoint();
 }
 
 } // namespace udp

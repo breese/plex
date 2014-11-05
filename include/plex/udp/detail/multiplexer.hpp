@@ -25,7 +25,6 @@ namespace detail
 class socket_base;
 
 // FIXME: Thread-safety (strand?)
-// FIXME: Use asio::async_result
 
 class multiplexer : public std::enable_shared_from_this<multiplexer>
 {
@@ -34,7 +33,6 @@ public:
     using next_layer_type = protocol_type::socket;
     using endpoint_type = protocol_type::endpoint;
     using buffer_type = detail::buffer;
-
 
     template <typename... Types>
     static std::shared_ptr<multiplexer> create(Types&&...);
@@ -61,6 +59,8 @@ public:
 
     void start_receive();
 
+    const next_layer_type& next_layer() const;
+
 private:
     multiplexer(boost::asio::io_service& io,
                 endpoint_type local_endpoint);
@@ -81,7 +81,7 @@ private:
                         AcceptHandler&& handler);
 
 private:
-    next_layer_type next_layer;
+    next_layer_type socket;
 
     using socket_map = std::map<endpoint_type, socket_base *>;
     socket_map sockets;
@@ -120,7 +120,7 @@ std::shared_ptr<multiplexer> multiplexer::create(Types&&... args)
 
 inline multiplexer::multiplexer(boost::asio::io_service& io,
                                 endpoint_type local_endpoint)
-    : next_layer(io, local_endpoint),
+    : socket(io, local_endpoint),
       receive_calls(0)
 {
 }
@@ -193,9 +193,9 @@ multiplexer::async_send_to(const ConstBufferSequence& buffers,
     typename boost::asio::handler_type<CompletionToken,
                               void(boost::system::error_code, std::size_t)>::type handler(std::forward<CompletionToken>(token));
     boost::asio::async_result<decltype(handler)> result(handler);
-    next_layer.async_send_to(buffers,
-                             endpoint,
-                             std::forward<decltype(handler)>(handler));
+    socket.async_send_to(buffers,
+                         endpoint,
+                         std::forward<decltype(handler)>(handler));
     return result.get();
 }
 
@@ -213,7 +213,7 @@ inline void multiplexer::do_start_receive()
     // FIXME: Improve buffer management
     auto datagram = std::make_shared<buffer_type>(1400); // FIXME: size
     auto self(shared_from_this());
-    next_layer.async_receive_from
+    socket.async_receive_from
         (boost::asio::buffer(datagram->data(), datagram->capacity()),
          *remote_endpoint,
          [self, datagram, remote_endpoint]
@@ -260,6 +260,11 @@ void multiplexer::process_receive(const boost::system::error_code& error,
         // Enqueue datagram on socket
         (*recipient).second->enqueue(error, bytes_transferred, datagram);
     }
+}
+
+inline const multiplexer::next_layer_type& multiplexer::next_layer() const
+{
+    return socket;
 }
 
 } // namespace detail

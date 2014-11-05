@@ -23,7 +23,6 @@ public:
 
     virtual ~socket_base() {}
 
-    endpoint_type local_endpoint() const { return local; }
     endpoint_type remote_endpoint() const { return remote; }
 
 protected:
@@ -34,7 +33,6 @@ protected:
                          std::shared_ptr<detail::buffer>) = 0;
 
 protected:
-    endpoint_type local;
     endpoint_type remote;
 };
 
