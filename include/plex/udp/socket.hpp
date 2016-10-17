@@ -190,8 +190,8 @@ inline socket::~socket()
     if (multiplexer)
     {
         multiplexer->remove(this);
+        get_service().remove(local_endpoint());
     }
-    get_service().remove(local_endpoint());
 }
 
 template <typename CompletionToken>
