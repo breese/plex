@@ -75,6 +75,16 @@ public:
 
     endpoint_type local_endpoint() const;
 
+    template <typename SettableSocketOption>
+    void set_option(const SettableSocketOption& option);
+
+    template <typename SettableSocketOption>
+    void set_option(const SettableSocketOption& option,
+                    boost::system::error_code&);
+
+    void set_option(const receive_buffer_size& option,
+                    boost::system::error_code&);
+
 private:
     friend class detail::multiplexer;
     friend class acceptor;
@@ -158,6 +168,7 @@ private:
 
 #include <algorithm>
 #include <functional>
+#include <boost/system/system_error.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/io_service.hpp>
 #include <plex/udp/detail/multiplexer.hpp>
@@ -470,6 +481,30 @@ inline socket::endpoint_type socket::local_endpoint() const
     assert(multiplexer);
 
     return multiplexer->next_layer().local_endpoint();
+}
+
+template <typename SettableSocketOption>
+void socket::set_option(const SettableSocketOption& option)
+{
+    boost::system::error_code error;
+    set_option(option, error);
+    if (error)
+        throw boost::system::system_error(error);
+}
+
+template <typename SettableSocketOption>
+void socket::set_option(const SettableSocketOption&,
+                        boost::system::error_code& error)
+{
+    error = boost::asio::error::make_error_code(boost::asio::error::no_protocol_option);
+}
+
+inline void socket::set_option(const receive_buffer_size& option,
+                               boost::system::error_code& error)
+{
+    assert(multiplexer);
+
+    multiplexer->set_receive_buffer_size(option.value());
 }
 
 } // namespace udp

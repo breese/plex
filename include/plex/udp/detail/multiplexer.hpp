@@ -59,6 +59,8 @@ public:
 
     void start_receive();
 
+    void set_receive_buffer_size(int);
+
     const next_layer_type& next_layer() const;
 
 private:
@@ -82,6 +84,7 @@ private:
 
 private:
     next_layer_type socket;
+    int receive_buffer_size;
 
     using socket_map = std::map<endpoint_type, socket_base *>;
     socket_map sockets;
@@ -121,6 +124,7 @@ std::shared_ptr<multiplexer> multiplexer::create(Types&&... args)
 inline multiplexer::multiplexer(boost::asio::io_service& io,
                                 endpoint_type local_endpoint)
     : socket(io, local_endpoint),
+      receive_buffer_size(1500 - 20 - 8), // MTU - IP and UDP header size
       receive_calls(0)
 {
 }
@@ -211,7 +215,7 @@ inline void multiplexer::do_start_receive()
 {
     auto remote_endpoint = std::make_shared<endpoint_type>();
     // FIXME: Improve buffer management
-    auto datagram = std::make_shared<buffer_type>(1400); // FIXME: size
+    auto datagram = std::make_shared<buffer_type>(receive_buffer_size);
     auto self(shared_from_this());
     socket.async_receive_from
         (boost::asio::buffer(datagram->data(), datagram->capacity()),
@@ -260,6 +264,11 @@ void multiplexer::process_receive(const boost::system::error_code& error,
         // Enqueue datagram on socket
         (*recipient).second->enqueue(error, bytes_transferred, datagram);
     }
+}
+
+inline void multiplexer::set_receive_buffer_size(int value)
+{
+    receive_buffer_size = value;
 }
 
 inline const multiplexer::next_layer_type& multiplexer::next_layer() const
