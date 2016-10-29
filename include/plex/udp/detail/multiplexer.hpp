@@ -12,6 +12,7 @@
 #include <boost/asio/placeholders.hpp>
 #include <boost/asio/io_service.hpp>
 #include <boost/asio/ip/udp.hpp>
+#include <boost/asio/socket_base.hpp>
 
 #include <plex/udp/detail/buffer.hpp>
 
@@ -33,6 +34,9 @@ public:
     using next_layer_type = protocol_type::socket;
     using endpoint_type = protocol_type::endpoint;
     using buffer_type = detail::buffer;
+
+    // Socket options
+    using receive_buffer_size = boost::asio::socket_base::receive_buffer_size;
 
     template <typename... Types>
     static std::shared_ptr<multiplexer> create(Types&&...);
@@ -59,7 +63,12 @@ public:
 
     void start_receive();
 
-    void set_receive_buffer_size(int);
+    template <typename SettableSocketOption>
+    void set_option(const SettableSocketOption& option,
+                    boost::system::error_code&);
+
+    void set_option(const receive_buffer_size& option,
+                    boost::system::error_code&);
 
     const next_layer_type& next_layer() const;
 
@@ -84,7 +93,10 @@ private:
 
 private:
     next_layer_type socket;
-    int receive_buffer_size;
+    struct
+    {
+        int receive_buffer_size;
+    } options;
 
     using socket_map = std::map<endpoint_type, socket_base *>;
     socket_map sockets;
@@ -124,9 +136,9 @@ std::shared_ptr<multiplexer> multiplexer::create(Types&&... args)
 inline multiplexer::multiplexer(boost::asio::io_service& io,
                                 endpoint_type local_endpoint)
     : socket(io, local_endpoint),
-      receive_buffer_size(1500 - 20 - 8), // MTU - IP and UDP header size
       receive_calls(0)
 {
+    options.receive_buffer_size = 1500 - 20 - 8; // MTU - IP and UDP header size
 }
 
 inline multiplexer::~multiplexer()
@@ -215,7 +227,7 @@ inline void multiplexer::do_start_receive()
 {
     auto remote_endpoint = std::make_shared<endpoint_type>();
     // FIXME: Improve buffer management
-    auto datagram = std::make_shared<buffer_type>(receive_buffer_size);
+    auto datagram = std::make_shared<buffer_type>(options.receive_buffer_size);
     auto self(shared_from_this());
     socket.async_receive_from
         (boost::asio::buffer(datagram->data(), datagram->capacity()),
@@ -266,9 +278,17 @@ void multiplexer::process_receive(const boost::system::error_code& error,
     }
 }
 
-inline void multiplexer::set_receive_buffer_size(int value)
+template <typename SettableSocketOption>
+void multiplexer::set_option(const SettableSocketOption& option,
+                             boost::system::error_code& error)
 {
-    receive_buffer_size = value;
+    socket.set_option(option, error);
+}
+
+inline void multiplexer::set_option(const receive_buffer_size& option,
+                                    boost::system::error_code&)
+{
+    options.receive_buffer_size = option.value();
 }
 
 inline const multiplexer::next_layer_type& multiplexer::next_layer() const

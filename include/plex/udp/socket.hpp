@@ -82,9 +82,6 @@ public:
     void set_option(const SettableSocketOption& option,
                     boost::system::error_code&);
 
-    void set_option(const receive_buffer_size& option,
-                    boost::system::error_code&);
-
 private:
     friend class detail::multiplexer;
     friend class acceptor;
@@ -493,18 +490,12 @@ void socket::set_option(const SettableSocketOption& option)
 }
 
 template <typename SettableSocketOption>
-void socket::set_option(const SettableSocketOption&,
+void socket::set_option(const SettableSocketOption& option,
                         boost::system::error_code& error)
-{
-    error = boost::asio::error::make_error_code(boost::asio::error::no_protocol_option);
-}
-
-inline void socket::set_option(const receive_buffer_size& option,
-                               boost::system::error_code& error)
 {
     assert(multiplexer);
 
-    multiplexer->set_receive_buffer_size(option.value());
+    multiplexer->set_option(option, error);
 }
 
 } // namespace udp
